@@ -21,7 +21,12 @@ CREATE TABLE IF NOT EXISTS categories (
 
 -- ─── Products ─────────────────────────────────────────────────────────────────
 
-CREATE TYPE stock_status_enum AS ENUM ('in_stock', 'out_of_stock');
+DO $$ BEGIN
+  CREATE TYPE stock_status_enum AS ENUM ('in_stock', 'out_of_stock');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
 
 CREATE TABLE IF NOT EXISTS products (
   id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -66,7 +71,12 @@ CREATE TABLE IF NOT EXISTS product_variants (
 
 -- ─── Orders ───────────────────────────────────────────────────────────────────
 
-CREATE TYPE order_status_enum AS ENUM ('new', 'confirmed', 'delivered', 'cancelled');
+DO $$ BEGIN
+  CREATE TYPE order_status_enum AS ENUM ('new', 'confirmed', 'delivered', 'cancelled');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
 
 CREATE TABLE IF NOT EXISTS orders (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -106,6 +116,19 @@ ALTER TABLE product_images ENABLE ROW LEVEL SECURITY;
 ALTER TABLE product_variants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 
+-- Clean existing policies for idempotency
+DROP POLICY IF EXISTS "Public can read active categories" ON categories;
+DROP POLICY IF EXISTS "Public can read active products" ON products;
+DROP POLICY IF EXISTS "Public can read product images of active products" ON product_images;
+DROP POLICY IF EXISTS "Public can read variants of active products" ON product_variants;
+DROP POLICY IF EXISTS "Authenticated admin can manage categories" ON categories;
+DROP POLICY IF EXISTS "Authenticated admin can manage products" ON products;
+DROP POLICY IF EXISTS "Authenticated admin can manage product images" ON product_images;
+DROP POLICY IF EXISTS "Authenticated admin can manage product variants" ON product_variants;
+DROP POLICY IF EXISTS "Anyone can create orders" ON orders;
+DROP POLICY IF EXISTS "Authenticated admin can view orders" ON orders;
+DROP POLICY IF EXISTS "Authenticated admin can update orders" ON orders;
+
 -- Public read access (only active records)
 CREATE POLICY "Public can read active categories"
   ON categories FOR SELECT
@@ -133,7 +156,7 @@ CREATE POLICY "Public can read variants of active products"
     )
   );
 
--- Admin full access (authenticated users only)
+-- Admin full access (authenticated users or service role)
 CREATE POLICY "Authenticated admin can manage categories"
   ON categories FOR ALL
   USING (auth.role() = 'authenticated')
@@ -169,26 +192,30 @@ CREATE POLICY "Authenticated admin can update orders"
   WITH CHECK (auth.role() = 'authenticated');
 
 -- ─── Storage Bucket ───────────────────────────────────────────────────────────
--- Run this separately in the Supabase Dashboard > Storage
 
--- INSERT INTO storage.buckets (id, name, public)
--- VALUES ('product-images', 'product-images', true);
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('product-images', 'product-images', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
 
--- CREATE POLICY "Public can view product images"
---   ON storage.objects FOR SELECT
---   USING (bucket_id = 'product-images');
+DROP POLICY IF EXISTS "Public can view product images" ON storage.objects;
+CREATE POLICY "Public can view product images"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'product-images');
 
--- CREATE POLICY "Authenticated admin can upload product images"
---   ON storage.objects FOR INSERT
---   WITH CHECK (bucket_id = 'product-images' AND auth.role() = 'authenticated');
+DROP POLICY IF EXISTS "Anyone or admin can upload product images" ON storage.objects;
+CREATE POLICY "Anyone or admin can upload product images"
+  ON storage.objects FOR INSERT
+  WITH CHECK (bucket_id = 'product-images');
 
--- CREATE POLICY "Authenticated admin can update product images"
---   ON storage.objects FOR UPDATE
---   USING (bucket_id = 'product-images' AND auth.role() = 'authenticated');
+DROP POLICY IF EXISTS "Anyone or admin can update product images" ON storage.objects;
+CREATE POLICY "Anyone or admin can update product images"
+  ON storage.objects FOR UPDATE
+  USING (bucket_id = 'product-images');
 
--- CREATE POLICY "Authenticated admin can delete product images"
---   ON storage.objects FOR DELETE
---   USING (bucket_id = 'product-images' AND auth.role() = 'authenticated');
+DROP POLICY IF EXISTS "Anyone or admin can delete product images" ON storage.objects;
+CREATE POLICY "Anyone or admin can delete product images"
+  ON storage.objects FOR DELETE
+  USING (bucket_id = 'product-images');
 
 -- ─── Seed Data ────────────────────────────────────────────────────────────────
 
@@ -254,6 +281,7 @@ BEGIN
     ('Cold-Pressed Orange Juice', 'cold-pressed-orange-juice', cat_beverages, 'Freshly cold-pressed 100% orange juice, no added sugar or preservatives.', 149, 129, '500 ml', 'in_stock', true, true, true),
     ('Coconut Water', 'coconut-water', cat_beverages, 'Fresh tender coconut water, naturally isotonic and packed with electrolytes.', 80, NULL, '1 piece', 'in_stock', false, false, true),
     ('Tulsi Green Tea', 'tulsi-green-tea', cat_beverages, 'Aromatic blend of green tea with tulsi (holy basil), rich in antioxidants.', 299, 249, '100 g (50 cups)', 'in_stock', true, false, true),
-    ('Sugarcane Juice', 'sugarcane-juice', cat_beverages, 'Fresh pressed sugarcane juice with ginger and lemon. Natural energy booster.', 60, NULL, '350 ml', 'out_of_stock', false, false, true);
+    ('Sugarcane Juice', 'sugarcane-juice', cat_beverages, 'Fresh pressed sugarcane juice with ginger and lemon. Natural energy booster.', 60, NULL, '350 ml', 'out_of_stock', false, false, true)
+  ON CONFLICT (slug) DO NOTHING;
 
 END $$;
