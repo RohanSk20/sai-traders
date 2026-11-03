@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import Image from 'next/image'
 import {
   Plus,
@@ -28,6 +28,27 @@ export default function AdminProductsPage() {
   const [products, setProducts] = useState<Product[]>(mockProducts)
   const [categories, setCategories] = useState<Category[]>(mockCategories)
 
+  // Fetch live products and categories from backend API
+  useEffect(() => {
+    fetch('/api/products')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.products && data.products.length > 0) {
+          setProducts(data.products)
+        }
+      })
+      .catch((err) => console.warn('Failed to load products from API:', err))
+
+    fetch('/api/categories')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.categories && data.categories.length > 0) {
+          setCategories(data.categories)
+        }
+      })
+      .catch((err) => console.warn('Failed to load categories from API:', err))
+  }, [])
+
   // Filters & Search
   const [search, setSearch] = useState('')
   const [selectedCat, setSelectedCat] = useState('')
@@ -52,26 +73,38 @@ export default function AdminProductsPage() {
   const [csvSuccessCount, setCsvSuccessCount] = useState<number | null>(null)
 
   // Quick Category Creation Handler
-  const handleQuickCreateCategory = () => {
+  const handleQuickCreateCategory = async () => {
     if (!newCatName.trim()) return
     const name = newCatName.trim()
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
-    const newCat: Category = {
-      id: `cat-${Date.now()}`,
+    const newCat: Partial<Category> = {
       name,
       slug,
       description: `Premium quality ${name} sourced for domestic and global export orders.`,
       image_url: 'https://images.unsplash.com/photo-1610348725531-843dff563e2c?auto=format&fit=crop&w=600&q=80',
       sort_order: categories.length + 1,
       is_active: true,
-      created_at: new Date().toISOString(),
     }
-    setCategories((prev) => [...prev, newCat])
-    setEditingProduct((prev) => (prev ? { ...prev, category_id: newCat.id } : null))
-    setNewCatName('')
-    setQuickCatOpen(false)
-    showToast(`Category "${newCat.name}" created and selected!`, 'success')
+
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newCat),
+      })
+      const data = await res.json()
+      if (data.success && data.category) {
+        setCategories((prev) => [...prev, data.category])
+        setEditingProduct((prev) => (prev ? { ...prev, category_id: data.category.id } : null))
+        setNewCatName('')
+        setQuickCatOpen(false)
+        showToast(`Category "${data.category.name}" created and selected!`, 'success')
+      }
+    } catch {
+      showToast('Failed to create category', 'error')
+    }
   }
+
 
   // Multi-image file upload handler
   const handleImageFilesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -180,35 +213,63 @@ export default function AdminProductsPage() {
   }, [products, search, selectedCat, stockFilter])
 
   // Quick inline toggle for stock status
-  const handleToggleStock = (id: string) => {
+  const handleToggleStock = async (id: string) => {
+    const prod = products.find((p) => p.id === id)
+    if (!prod) return
+    const nextStatus = prod.stock_status === 'in_stock' ? 'out_of_stock' : 'in_stock'
+
+    // Optimistic UI update
     setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === id) {
-          const nextStatus = p.stock_status === 'in_stock' ? 'out_of_stock' : 'in_stock'
-          showToast(
-            `${p.name} marked ${nextStatus === 'in_stock' ? 'In Stock' : 'Out of Stock'}`,
-            nextStatus === 'in_stock' ? 'success' : 'warning'
-          )
-          return { ...p, stock_status: nextStatus }
-        }
-        return p
-      })
+      prev.map((p) => (p.id === id ? { ...p, stock_status: nextStatus } : p))
     )
+
+    try {
+      await fetch('/api/products', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, stock_status: nextStatus }),
+      })
+      showToast(
+        `${prod.name} marked ${nextStatus === 'in_stock' ? 'In Stock' : 'Out of Stock'}`,
+        nextStatus === 'in_stock' ? 'success' : 'warning'
+      )
+    } catch {
+      showToast('Failed to update stock status on server', 'error')
+    }
   }
 
   // Toggle active
-  const handleToggleActive = (id: string) => {
+  const handleToggleActive = async (id: string) => {
+    const prod = products.find((p) => p.id === id)
+    if (!prod) return
+    const nextActive = !prod.is_active
+
     setProducts((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, is_active: !p.is_active } : p))
+      prev.map((p) => (p.id === id ? { ...p, is_active: nextActive } : p))
     )
-    showToast('Updated active status', 'info')
+
+    try {
+      await fetch('/api/products', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, is_active: nextActive }),
+      })
+      showToast('Updated active status', 'info')
+    } catch {
+      showToast('Failed to update active status on server', 'error')
+    }
   }
 
   // Delete product
-  const handleDeleteProduct = (id: string) => {
+  const handleDeleteProduct = async (id: string) => {
     if (confirm('Are you sure you want to delete this product?')) {
       setProducts((prev) => prev.filter((p) => p.id !== id))
-      showToast('Product deleted', 'info')
+      try {
+        await fetch(`/api/products?id=${id}`, { method: 'DELETE' })
+        showToast('Product deleted from storefront', 'info')
+      } catch {
+        showToast('Failed to delete product on server', 'error')
+      }
     }
   }
 
@@ -248,7 +309,7 @@ export default function AdminProductsPage() {
   }
 
   // Save product
-  const handleSaveProduct = (e: React.FormEvent) => {
+  const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editingProduct?.name || !editingProduct.price) return
 
@@ -262,39 +323,47 @@ export default function AdminProductsPage() {
       editingProduct.slug ||
       editingProduct.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
 
-    if (editingProduct.id) {
-      setProducts((prev) =>
-        prev.map((p) =>
-          p.id === editingProduct.id
-            ? ({ ...p, ...editingProduct, slug } as Product)
-            : p
+    const payload: Partial<Product> = {
+      ...editingProduct,
+      slug,
+      price: Number(editingProduct.price),
+      sale_price: editingProduct.sale_price ? Number(editingProduct.sale_price) : null,
+      unit_label: editingProduct.unit_label || '1 kg',
+      stock_status: editingProduct.stock_status || 'in_stock',
+      is_organic: editingProduct.is_organic ?? false,
+      is_featured: editingProduct.is_featured ?? false,
+      is_active: editingProduct.is_active ?? true,
+      tags: editingProduct.tags || ['fresh'],
+      images: editingProduct.images || [],
+    }
+
+    try {
+      const res = await fetch('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (data.success && data.product) {
+        setProducts((prev) => {
+          const exists = prev.some((p) => p.id === data.product.id)
+          if (exists) {
+            return prev.map((p) => (p.id === data.product.id ? data.product : p))
+          }
+          return [data.product, ...prev]
+        })
+        showToast(
+          editingProduct.id
+            ? 'Product updated & live on storefront!'
+            : 'New product added & live on storefront!',
+          'success'
         )
-      )
-      showToast('Product updated successfully!', 'success')
-    } else {
-      const newProd: Product = {
-        id: `prod-${Date.now()}`,
-        name: editingProduct.name,
-        slug,
-        category_id: editingProduct.category_id || categories[0]?.id || 'cat-1',
-        short_description: editingProduct.short_description || null,
-        description: editingProduct.description || null,
-        price: Number(editingProduct.price),
-        sale_price: editingProduct.sale_price ? Number(editingProduct.sale_price) : null,
-        unit_label: editingProduct.unit_label || '1 kg',
-        stock_status: editingProduct.stock_status || 'in_stock',
-        is_organic: editingProduct.is_organic ?? false,
-        is_featured: editingProduct.is_featured ?? false,
-        is_active: editingProduct.is_active ?? true,
-        tags: editingProduct.tags || [],
-        seo_title: editingProduct.seo_title || null,
-        seo_description: editingProduct.seo_description || null,
-        created_at: new Date().toISOString(),
-        images: editingProduct.images || [],
-        variants: editingProduct.variants || [],
+      } else {
+        throw new Error(data.error || 'Failed to save product')
       }
-      setProducts((prev) => [newProd, ...prev])
-      showToast('New product added to catalog!', 'success')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to save product'
+      showToast(msg, 'error')
     }
 
     setFormModalOpen(false)

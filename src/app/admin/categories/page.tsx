@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import Image from 'next/image'
 import {
   Plus,
@@ -25,6 +25,18 @@ export default function AdminCategoriesPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
 
+  // Fetch live categories from backend API on mount
+  useEffect(() => {
+    fetch('/api/categories')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.categories && data.categories.length > 0) {
+          setCategories(data.categories)
+        }
+      })
+      .catch((err) => console.warn('Failed to load categories:', err))
+  }, [])
+
   const handleOpenAdd = () => {
     setEditingCategory({
       name: '',
@@ -42,18 +54,37 @@ export default function AdminCategoriesPage() {
     setModalOpen(true)
   }
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('Are you sure you want to delete this category? Products linked to it should be updated first.')) {
       setCategories((prev) => prev.filter((c) => c.id !== id))
-      showToast('Category deleted', 'info')
+      try {
+        await fetch(`/api/categories?id=${id}`, { method: 'DELETE' })
+        showToast('Category deleted from storefront', 'info')
+      } catch {
+        showToast('Failed to delete category on server', 'error')
+      }
     }
   }
 
-  const handleToggleActive = (id: string) => {
+  const handleToggleActive = async (id: string) => {
+    const target = categories.find((c) => c.id === id)
+    if (!target) return
+    const nextActive = !target.is_active
+
     setCategories((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, is_active: !c.is_active } : c))
+      prev.map((c) => (c.id === id ? { ...c, is_active: nextActive } : c))
     )
-    showToast('Updated status', 'success')
+
+    try {
+      await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...target, is_active: nextActive }),
+      })
+      showToast('Updated status', 'success')
+    } catch {
+      showToast('Failed to update status on server', 'error')
+    }
   }
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -76,7 +107,7 @@ export default function AdminCategoriesPage() {
     }
   }
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editingCategory?.name) return
 
@@ -84,30 +115,35 @@ export default function AdminCategoriesPage() {
       editingCategory.slug ||
       editingCategory.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
 
-    if (editingCategory.id) {
-      // Edit
-      setCategories((prev) =>
-        prev.map((c) =>
-          c.id === editingCategory.id ? ({ ...c, ...editingCategory, slug } as Category) : c
-        )
-      )
-      showToast('Category updated successfully!', 'success')
-    } else {
-      // Add
-      const newCategory: Category = {
-        id: `cat-${Date.now()}`,
-        name: editingCategory.name,
-        slug,
-        description: editingCategory.description || null,
-        image_url:
-          editingCategory.image_url ||
-          'https://images.unsplash.com/photo-1619566636858-adf3ef46400b?auto=format&fit=crop&w=600&q=80',
-        sort_order: editingCategory.sort_order || categories.length + 1,
-        is_active: editingCategory.is_active ?? true,
-        created_at: new Date().toISOString(),
+    const payload: Partial<Category> = {
+      ...editingCategory,
+      slug,
+      sort_order: editingCategory.sort_order ?? categories.length + 1,
+      is_active: editingCategory.is_active ?? true,
+    }
+
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (data.success && data.category) {
+        setCategories((prev) => {
+          const exists = prev.some((c) => c.id === data.category.id)
+          if (exists) {
+            return prev.map((c) => (c.id === data.category.id ? data.category : c))
+          }
+          return [...prev, data.category]
+        })
+        showToast(editingCategory.id ? 'Category updated!' : 'New category created & live!', 'success')
+      } else {
+        throw new Error(data.error || 'Failed to save category')
       }
-      setCategories((prev) => [...prev, newCategory])
-      showToast('New category created!', 'success')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error saving category'
+      showToast(msg, 'error')
     }
 
     setModalOpen(false)

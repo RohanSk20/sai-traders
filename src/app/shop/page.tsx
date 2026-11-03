@@ -23,6 +23,9 @@ interface ShopPageProps {
   }>
 }
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export async function generateMetadata({ searchParams }: ShopPageProps): Promise<Metadata> {
   const resolvedParams = await searchParams
   const isFiltered =

@@ -24,6 +24,9 @@ interface CategoryPageProps {
   }>
 }
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export async function generateMetadata({ params, searchParams }: CategoryPageProps): Promise<Metadata> {
   const { slug } = await params
   const category = await getCategoryBySlug(slug)

@@ -20,6 +20,9 @@ import { ProductCard } from '@/components/product/ProductCard'
 import { CategoryCard, SectionHeading, FeatureCard, TrustBadge, Rating } from '@/components/ui/index'
 import { Button } from '@/components/ui/Button'
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export const metadata: Metadata = {
   title: `${siteConfig.name} – Fresh Organic Groceries Delivered`,
   description: siteConfig.description,
